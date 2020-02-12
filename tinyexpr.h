@@ -58,7 +58,7 @@ typedef struct te_variable {
     void *context;
 } te_variable;
 
-
+typedef const void* (*te_lookup_callback)(const char* name, int len, void* lookup_context, int* out_type, void** out_context);
 
 /* Parses the input expression, evaluates it, and frees it. */
 /* Returns NaN on error. */
@@ -66,7 +66,8 @@ double te_interp(const char *expression, int *error);
 
 /* Parses the input expression and binds variables. */
 /* Returns NULL on error. */
-te_expr *te_compile(const char *expression, const te_variable *variables, int var_count, int *error);
+te_expr *te_compile(const char *expression, int *error, const te_variable *variables);
+te_expr *te_compile_lookup(const char *expression, int *error, te_lookup_callback lookup, void* lookup_context);
 
 /* Evaluates the expression. */
 double te_eval(const te_expr *n);

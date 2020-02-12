@@ -68,8 +68,8 @@ typedef struct state {
     union {double value; const double *bound; const void *function;};
     void *context;
 
-    const te_variable *lookup;
-    int lookup_len;
+    te_lookup_callback lookup;
+    void *lookup_context;
 } state;
 
 
@@ -182,7 +182,8 @@ static const te_variable functions[] = {
     {0, 0, 0, 0}
 };
 
-static const te_variable *find_builtin(const char *name, int len) {
+static const void* find_builtin(const char *name, int len, int* out_type, void** out_context) {
+    const te_variable* ret;
     int imin = 0;
     int imax = sizeof(functions) / sizeof(te_variable) - 2;
 
@@ -192,7 +193,10 @@ static const te_variable *find_builtin(const char *name, int len) {
         int c = strncmp(name, functions[i].name, len);
         if (!c) c = '\0' - functions[i].name[len];
         if (c == 0) {
-            return functions + i;
+            ret = functions + i;
+            *out_type = ret->type;
+            *out_context = ret->context;
+            return ret->address;
         } else if (c > 0) {
             imin = i + 1;
         } else {
@@ -203,17 +207,9 @@ static const te_variable *find_builtin(const char *name, int len) {
     return 0;
 }
 
-static const te_variable *find_lookup(const state *s, const char *name, int len) {
-    int iters;
-    const te_variable *var;
+static const te_variable *find_lookup(const state *s, const char *name, int len, int* out_type, void** out_context) {
     if (!s->lookup) return 0;
-
-    for (var = s->lookup, iters = s->lookup_len; iters; ++var, --iters) {
-        if (strncmp(name, var->name, len) == 0 && var->name[len] == '\0') {
-            return var;
-        }
-    }
-    return 0;
+    return ((te_lookup_callback)s->lookup)(name, len, s->lookup_context, out_type, out_context);
 }
 
 
@@ -244,30 +240,33 @@ void next_token(state *s) {
             /* Look for a variable or builtin function call. */
             if (s->next[0] >= 'a' && s->next[0] <= 'z') {
                 const char *start;
+                int var_type;
+                void* var_context;
+
                 start = s->next;
                 while ((s->next[0] >= 'a' && s->next[0] <= 'z') || (s->next[0] >= '0' && s->next[0] <= '9') || (s->next[0] == '_')) s->next++;
 
-                const te_variable *var = find_lookup(s, start, s->next - start);
-                if (!var) var = find_builtin(start, s->next - start);
+                const void* var = find_lookup(s, start, s->next - start, &var_type, &var_context);
+                if (!var) var = find_builtin(start, s->next - start, &var_type, &var_context);
 
                 if (!var) {
                     s->type = TOK_ERROR;
                 } else {
-                    switch(TYPE_MASK(var->type))
+                    switch(TYPE_MASK(var_type))
                     {
                         case TE_VARIABLE:
                             s->type = TOK_VARIABLE;
-                            s->bound = var->address;
+                            s->bound = var;
                             break;
 
                         case TE_CLOSURE0: case TE_CLOSURE1: case TE_CLOSURE2: case TE_CLOSURE3:         /* Falls through. */
                         case TE_CLOSURE4: case TE_CLOSURE5: case TE_CLOSURE6: case TE_CLOSURE7:         /* Falls through. */
-                            s->context = var->context;                                                  /* Falls through. */
+                            s->context = var_context;                                                   /* Falls through. */
 
                         case TE_FUNCTION0: case TE_FUNCTION1: case TE_FUNCTION2: case TE_FUNCTION3:     /* Falls through. */
                         case TE_FUNCTION4: case TE_FUNCTION5: case TE_FUNCTION6: case TE_FUNCTION7:     /* Falls through. */
-                            s->type = var->type;
-                            s->function = var->address;
+                            s->type = var_type;
+                            s->function = var;
                             break;
                     }
                 }
@@ -585,12 +584,34 @@ static void optimize(te_expr *n) {
     }
 }
 
+static const void *find_in_lookup(const char* name, int name_len, void* lookup_context, int* out_type, void** out_context) {
+    const te_variable* var;
+    const te_variable** variables;
 
-te_expr *te_compile(const char *expression, const te_variable *variables, int var_count, int *error) {
+    variables = (const te_variable**)lookup_context;
+    var = variables[0];
+    if (var) {
+        while (var->address) {
+            if (strncmp(name, var->name, name_len) == 0 && var->name[name_len] == '\0') {
+                *out_type = var->type;
+                *out_context = var->context;
+                return var->address;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+te_expr *te_compile(const char *expression, int *error, const te_variable *variables) {
+    return te_compile_lookup(expression, error, &find_in_lookup, &variables);
+}
+
+te_expr *te_compile_lookup(const char *expression, int *error, te_lookup_callback lookup, void* lookup_context) {
     state s;
     s.start = s.next = expression;
-    s.lookup = variables;
-    s.lookup_len = var_count;
+    s.lookup = lookup;
+    s.lookup_context = lookup_context;
 
     next_token(&s);
     te_expr *root = list(&s);
@@ -609,9 +630,8 @@ te_expr *te_compile(const char *expression, const te_variable *variables, int va
     }
 }
 
-
 double te_interp(const char *expression, int *error) {
-    te_expr *n = te_compile(expression, 0, 0, error);
+    te_expr *n = te_compile(expression, error, NULL);
     double ret;
     if (n) {
         ret = te_eval(n);
