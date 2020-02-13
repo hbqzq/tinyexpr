@@ -584,30 +584,36 @@ static void optimize(te_expr *n) {
     }
 }
 
-static const void *find_in_lookup(const char* name, int name_len, void* lookup_context, int* out_type, void** out_context) {
-    const te_variable* var;
-    const te_variable** variables;
+typedef struct te_lookup_context {
+    const te_variable*  variables;
+    int                 variable_count;
+} te_lookup_context;
 
-    variables = (const te_variable**)lookup_context;
-    var = variables[0];
-    if (var) {
-        while (var->address) {
-            if (strncmp(name, var->name, name_len) == 0 && var->name[name_len] == '\0') {
-                *out_type = var->type;
-                *out_context = var->context;
-                return var->address;
-            }
+static const void *find_in_lookup_context(const char* name, int name_len, void* lookup_context, int* out_type, void** out_context) {
+    size_t i;
+    const te_variable*          var;
+    const te_variable*          variables;
+    const te_lookup_context*    ctx = (const te_lookup_context*)lookup_context;
+
+    variables = ctx->variables;
+    for (i = 0; i < ctx->variable_count; i++) {
+        var = variables + i;
+        if (strncmp(name, var->name, name_len) == 0 && var->name[name_len] == '\0') {
+            *out_type = var->type;
+            *out_context = var->context;
+            return var->address;
         }
     }
 
     return NULL;
 }
 
-te_expr *te_compile(const char *expression, int *error, const te_variable *variables) {
-    return te_compile_lookup(expression, error, &find_in_lookup, &variables);
+te_expr *te_compile(const char *expression, const te_variable *variables, int variable_count, int *error) {
+    te_lookup_context lookup_context = { variables, variable_count };
+    return te_compile_lookup(expression, &find_in_lookup_context, &lookup_context, error);
 }
 
-te_expr *te_compile_lookup(const char *expression, int *error, te_lookup_callback lookup, void* lookup_context) {
+te_expr *te_compile_lookup(const char *expression, te_lookup_callback lookup, void* lookup_context, int *error) {
     state s;
     s.start = s.next = expression;
     s.lookup = lookup;
@@ -631,7 +637,7 @@ te_expr *te_compile_lookup(const char *expression, int *error, te_lookup_callbac
 }
 
 double te_interp(const char *expression, int *error) {
-    te_expr *n = te_compile(expression, error, NULL);
+    te_expr *n = te_compile(expression, NULL, 0, error);
     double ret;
     if (n) {
         ret = te_eval(n);
