@@ -78,6 +78,7 @@ typedef struct state {
 #define IS_PURE(TYPE) (((TYPE) & TE_FLAG_PURE) != 0)
 #define IS_FUNCTION(TYPE) (((TYPE) & TE_FUNCTION0) != 0)
 #define IS_CLOSURE(TYPE) (((TYPE) & TE_CLOSURE0) != 0)
+#define IS_CHAR(V) ((V) >= 'a' && (V) <= 'z' || (V) >= 'A' && (V) <= 'Z' || (V) == '_')
 #define ARITY(TYPE) ( ((TYPE) & (TE_FUNCTION0 | TE_CLOSURE0)) ? ((TYPE) & 0x00000007) : 0 )
 #define NEW_EXPR(type, ...) new_expr((type), (const te_expr*[]){__VA_ARGS__})
 
@@ -238,13 +239,13 @@ void next_token(state *s) {
             s->type = TOK_NUMBER;
         } else {
             /* Look for a variable or builtin function call. */
-            if (s->next[0] >= 'a' && s->next[0] <= 'z') {
+            if (IS_CHAR(s->next[0])) {
                 const char *start;
                 int var_type;
                 void* var_context;
 
                 start = s->next;
-                while ((s->next[0] >= 'a' && s->next[0] <= 'z') || (s->next[0] >= '0' && s->next[0] <= '9') || (s->next[0] == '_')) s->next++;
+                while (IS_CHAR(s->next[0]) || (s->next[0] >= '0' && s->next[0] <= '9')) s->next++;
 
                 const void* var = find_lookup(s, start, s->next - start, &var_type, &var_context);
                 if (!var) var = find_builtin(start, s->next - start, &var_type, &var_context);
@@ -590,7 +591,7 @@ typedef struct te_lookup_context {
 } te_lookup_context;
 
 static const void *find_in_lookup_context(const char* name, int name_len, void* lookup_context, int* out_type, void** out_context) {
-    size_t i;
+    int i;
     const te_variable*          var;
     const te_variable*          variables;
     const te_lookup_context*    ctx = (const te_lookup_context*)lookup_context;
